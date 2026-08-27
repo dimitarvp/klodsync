@@ -53,3 +53,9 @@ go install github.com/dimitarvp/klodsync@latest
 
 `go test ./...` covers the per-file decision engine and the transcript
 parsing edge cases (timestamp-less final lines, >64KB lines).
+
+`tests/gauntlet.sh` is the behavior suite: 65 checks across 18 scenarios
+(stale machines, divergence, deletions, adopt, live sessions) run against
+synthetic machines in a temp dir — no ssh, no real `~/.claude`. It builds
+the current source by default; `CS=/path/to/tool` tests any other
+implementation of the same CLI.
