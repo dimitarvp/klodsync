@@ -167,19 +167,32 @@ func main() {
 	cfg.LPrefix = munge(cfg.LHome)
 	cfg.HPrefix = munge(cfg.HHome)
 
-	work, err := os.MkdirTemp("", "klodsync.")
-	if err != nil {
-		fatal("mktemp: %v", err)
-	}
-	cfg.Work = work
 	cfg.StateDir = filepath.Join(cfg.LRoot, ".claude-sync")
 	cfg.BaseFile = filepath.Join(cfg.StateDir, "base."+hubKey(cfg)+".tsv")
 	cfg.LockDir = filepath.Join(cfg.StateDir, "lock")
 
-	// one run at a time per machine (stale lock from a crash is removed by age)
 	if err := os.MkdirAll(cfg.StateDir, 0o755); err != nil {
 		fatal("state dir: %v", err)
 	}
+
+	// the work dir must share a filesystem with ~/.claude and ~/.claude.json:
+	// staged files are moved into place with rename(2), which cannot cross
+	// devices (/tmp is tmpfs on some machines). Crashed runs can leave work.*
+	// behind, so old ones are swept like stale locks.
+	if old, globErr := filepath.Glob(filepath.Join(cfg.StateDir, "work.*")); globErr == nil {
+		for _, d := range old {
+			if st, statErr := os.Stat(d); statErr == nil && time.Since(st.ModTime()) > 2*time.Hour {
+				_ = os.RemoveAll(d)
+			}
+		}
+	}
+	work, err := os.MkdirTemp(cfg.StateDir, "work.")
+	if err != nil {
+		fatal("mktemp: %v", err)
+	}
+	cfg.Work = work
+
+	// one run at a time per machine (stale lock from a crash is removed by age)
 	if err := os.Mkdir(cfg.LockDir, 0o755); err != nil {
 		st, serr := os.Stat(cfg.LockDir)
 		if serr == nil && time.Since(st.ModTime()) > 2*time.Hour {
