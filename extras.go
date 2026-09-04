@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -47,7 +48,7 @@ func localCksum(path string) string {
 	if err != nil {
 		return "missing"
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	cmd := exec.Command("cksum")
 	cmd.Stdin = f
 	out, err := cmd.Output()
@@ -100,7 +101,7 @@ else echo "missing 0"; fi`, nil)
 			return
 		}
 		var hmt int64
-		fmt.Sscanf(hmtS, "%d", &hmt)
+		hmt, _ = strconv.ParseInt(strings.TrimSpace(hmtS), 10, 64) // unparsable hub mtime = 0: hub counts as older, we push (safe)
 		if st.ModTime().Unix() >= hmt {
 			if rsyncOne(cfg, lf, hubArg(cfg)+"/"+rel) == nil {
 				report("→ hub (newer here)")
@@ -193,7 +194,7 @@ jq --arg from "`+cfg.LHome+`" --arg to "`+cfg.HHome+`" \
 			return
 		}
 		var hmt int64
-		fmt.Sscanf(strings.TrimSpace(hmtS), "%d", &hmt)
+		hmt, _ = strconv.ParseInt(strings.TrimSpace(hmtS), 10, 64) // unparsable hub mtime = 0: hub counts as older, we push (safe)
 		if st.ModTime().Unix() >= hmt {
 			if rsyncOne(cfg, lf, hubArg(cfg)+"/"+rel) == nil {
 				hubRewrite()

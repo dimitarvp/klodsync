@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -82,7 +83,7 @@ func lastTS(path string, size int64) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	const window = 131072
 	off := int64(0)
 	if size > window {
@@ -193,7 +194,7 @@ func parseManifest(text string) *manifest {
 		switch {
 		case parts[0] == "F" && len(parts) == 5:
 			var size int64
-			fmt.Sscanf(parts[3], "%d", &size)
+			size, _ = strconv.ParseInt(parts[3], 10, 64) // unparsable size counts as 0
 			m.Files = append(m.Files, fileEnt{Proj: parts[1], Rel: parts[2], Size: size, TS: parts[4]})
 			m.Lines++
 		case parts[0] == "D" && len(parts) == 3:

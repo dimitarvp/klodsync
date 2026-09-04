@@ -112,7 +112,7 @@ func validateDeletes(paths []string) error {
 	bad := false
 	for _, p := range paths {
 		if strings.HasPrefix(p, "/") || strings.Contains(p, "..") ||
-			!(projDelRe.MatchString(p) || satDelRe.MatchString(p)) {
+			!projDelRe.MatchString(p) && !satDelRe.MatchString(p) {
 			fmt.Fprintf(os.Stderr, "REFUSING unexpected delete path: %s\n", p)
 			bad = true
 		}
