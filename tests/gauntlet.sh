@@ -313,6 +313,24 @@ checknot "project stray.lock did NOT travel" test -e "$HUB/projects/$LPRE-proj1/
 OUT="$(run_on "$TESTROOT/A" "$HUB" run 2>&1)"
 check "locks don't cause churn" grep -q 'plan: 0↑ 0↓ 0✗hub 0✗local' <<<"$OUT"
 
+
+# ══ T19: the per-machine lock is kernel-owned: an interrupted run leaves nothing behind ══
+say "── T19 lock: interrupted status, legacy oracle dir, orphan work dirs"
+run_on "$TESTROOT/A" "$HUB" status 2>/dev/null | head -c 1 >/dev/null # the pager closes the pipe at once
+OUT="$(run_on "$TESTROOT/A" "$HUB" run --dry-run 2>&1)"
+checknot "run after an interrupted status is not blocked" grep -q 'another klodsync' <<<"$OUT"
+check "lock is a plain file that stays" test -f "$TESTROOT/A/claude/.claude-sync/klodsync.lock"
+mkdir -p "$TESTROOT/A/claude/.claude-sync/lock"
+OUT="$(run_on "$TESTROOT/A" "$HUB" run --dry-run 2>&1)"
+RC=$?
+check "legacy mkdir lock dir refuses the run" test "$RC" -ne 0
+check "…and names it" grep -q 'legacy lock dir' <<<"$OUT"
+rmdir "$TESTROOT/A/claude/.claude-sync/lock"
+mkdir -p "$TESTROOT/A/claude/.claude-sync/work.orphan"
+run_on "$TESTROOT/A" "$HUB" run --dry-run >/dev/null 2>&1
+checknot "orphan work dir swept by the next run" test -e "$TESTROOT/A/claude/.claude-sync/work.orphan"
+checknot "no work dir left behind after a run" test -n "$(ls -d "$TESTROOT/A/claude/.claude-sync"/work.* 2>/dev/null)"
+
 say ""
 say "════ RESULT: $PASS passed, $FAIL failed ════"
 say "(fixtures in $TESTROOT — removed on success)"

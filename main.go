@@ -24,9 +24,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
-	"time"
+	"syscall"
 )
 
 type config struct {
@@ -47,7 +48,7 @@ type config struct {
 	Work     string
 	StateDir string
 	BaseFile string
-	LockDir  string
+	LockFile string
 	SSHOpts  []string
 }
 
@@ -169,19 +170,47 @@ func main() {
 
 	cfg.StateDir = filepath.Join(cfg.LRoot, ".claude-sync")
 	cfg.BaseFile = filepath.Join(cfg.StateDir, "base."+hubKey(cfg)+".tsv")
-	cfg.LockDir = filepath.Join(cfg.StateDir, "lock")
+	cfg.LockFile = filepath.Join(cfg.StateDir, "klodsync.lock")
 
 	if err := os.MkdirAll(cfg.StateDir, 0o755); err != nil {
 		fatal("state dir: %v", err)
 	}
 
-	// the work dir must share a filesystem with ~/.claude and ~/.claude.json:
+	// A closed pager (klodsync status | head) must not kill a run half-way:
+	// with SIGPIPE ignored, writes to the dead pipe fail quietly and the run
+	// completes. The lock below is released by the kernel either way.
+	signal.Ignore(syscall.SIGPIPE)
+
+	os.Exit(runLocked(cfg, verb, adoptTarget))
+}
+
+// runLocked takes the per-machine lock, does the work and returns the exit
+// code; every deferred cleanup runs before main exits.
+func runLocked(cfg *config, verb, adoptTarget string) int {
+	// The bash oracle (claude_sync) locks with a mkdir at StateDir/lock. If
+	// that dir exists it is a live oracle run or its leftover: refuse, never
+	// guess from its age.
+	legacy := filepath.Join(cfg.StateDir, "lock")
+	if _, err := os.Stat(legacy); err == nil {
+		fatal("legacy lock dir %s exists: a claude_sync (bash) run holds it, or it is a leftover; if `pgrep -x claude_sync` shows nothing, remove the dir and retry", legacy)
+	}
+	lf, err := acquireLock(cfg.LockFile, verb == "status")
+	if err != nil {
+		if verb == "status" {
+			fatal("a klodsync run is in progress on this machine; retry when it finishes")
+		}
+		fatal("another klodsync (run or status) is active on this machine; aborting")
+	}
+	defer func() { _ = lf.Close() }() // releases the lock; the kernel does the same on any exit
+
+	// The work dir must share a filesystem with ~/.claude and ~/.claude.json:
 	// staged files are moved into place with rename(2), which cannot cross
-	// devices (/tmp is tmpfs on some machines). Crashed runs can leave work.*
-	// behind, so old ones are swept like stale locks.
-	if old, globErr := filepath.Glob(filepath.Join(cfg.StateDir, "work.*")); globErr == nil {
-		for _, d := range old {
-			if st, statErr := os.Stat(d); statErr == nil && time.Since(st.ModTime()) > 2*time.Hour {
+	// devices (/tmp is tmpfs on some machines). Under the exclusive lock no
+	// other run is alive, so every work.* present is the orphan of a crashed
+	// run: sweep them all, no age guessing.
+	if verb != "status" {
+		if old, globErr := filepath.Glob(filepath.Join(cfg.StateDir, "work.*")); globErr == nil {
+			for _, d := range old {
 				_ = os.RemoveAll(d)
 			}
 		}
@@ -191,24 +220,7 @@ func main() {
 		fatal("mktemp: %v", err)
 	}
 	cfg.Work = work
-
-	// one run at a time per machine (stale lock from a crash is removed by age)
-	if err := os.Mkdir(cfg.LockDir, 0o755); err != nil {
-		st, serr := os.Stat(cfg.LockDir)
-		if serr == nil && time.Since(st.ModTime()) > 2*time.Hour {
-			fmt.Println("removing stale lock (>2h old)")
-			_ = os.Remove(cfg.LockDir)
-			if err2 := os.Mkdir(cfg.LockDir, 0o755); err2 != nil {
-				fatal("another klodsync/claude_sync is running (%s); aborting", cfg.LockDir)
-			}
-		} else {
-			fatal("another klodsync/claude_sync is running (%s); aborting", cfg.LockDir)
-		}
-	}
-	defer func() {
-		_ = os.RemoveAll(cfg.Work)
-		_ = os.Remove(cfg.LockDir)
-	}()
+	defer func() { _ = os.RemoveAll(work) }()
 
 	var runErr error
 	if verb == "adopt" {
@@ -217,12 +229,33 @@ func main() {
 		runErr = sync(cfg, verb)
 	}
 	if runErr != nil {
-		// cleanup runs via defer
 		fmt.Fprintf(os.Stderr, "klodsync: %v\n", runErr)
-		_ = os.RemoveAll(cfg.Work)
-		_ = os.Remove(cfg.LockDir)
-		os.Exit(1)
+		return 1
 	}
+	return 0
+}
+
+// acquireLock takes an advisory kernel lock (flock) on path, shared for
+// readers and exclusive for writers, without waiting. The file is created
+// once and never removed: flock binds to the inode, so deleting and
+// re-creating it would let two processes hold "the lock" at once. The kernel
+// releases the lock when the holder exits, however it exits (SIGPIPE, kill
+// -9), so there is nothing stale to detect or reclaim. The returned file must
+// stay open for as long as the lock is needed.
+func acquireLock(path string, shared bool) (*os.File, error) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	how := syscall.LOCK_EX
+	if shared {
+		how = syscall.LOCK_SH
+	}
+	if err := syscall.Flock(int(f.Fd()), how|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return f, nil
 }
 
 func fatal(format string, a ...any) {

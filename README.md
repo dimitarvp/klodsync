@@ -32,7 +32,9 @@ end up with everything, nothing is deleted, and the merge is reported.
 Deletions propagate only through a state file that records the agreed file
 list after the last fully successful run. No state means no deletions — the
 run degrades to a pure merge. A file deleted on one side but modified on the
-other survives. Live-process lock files never travel.
+other survives. Live-process lock files never travel. One run at a time per
+machine, held by a kernel file lock (flock) that dies with the process; an
+interrupted run leaves nothing to clean up.
 
 The `.claude.json` per-project entries (trust, permissions, MCP servers,
 last session) move with their project. Prompt history merges as a union.
