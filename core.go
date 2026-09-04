@@ -111,15 +111,9 @@ func scanLocal(root string) (*manifest, error) {
 	m := &manifest{Sids: map[string]map[string]bool{}}
 	pdir := filepath.Join(root, "projects")
 	if entries, err := os.ReadDir(pdir); err == nil {
-		names := make([]string, 0, len(entries))
-		byName := map[string]os.DirEntry{}
+		// os.ReadDir returns entries sorted by name — the order the hub's perl uses too
 		for _, e := range entries {
-			names = append(names, e.Name())
-			byName[e.Name()] = e
-		}
-		sort.Strings(names)
-		for _, name := range names {
-			e := byName[name]
+			name := e.Name()
 			if strings.HasPrefix(name, ".") {
 				continue
 			}
@@ -171,10 +165,12 @@ func scanLocal(root string) (*manifest, error) {
 			if strings.HasPrefix(e.Name(), ".") || !e.IsDir() {
 				continue
 			}
-			if m.Sids[satroot] == nil {
-				m.Sids[satroot] = map[string]bool{}
+			sids := m.Sids[satroot]
+			if sids == nil {
+				sids = map[string]bool{}
+				m.Sids[satroot] = sids
 			}
-			m.Sids[satroot][e.Name()] = true
+			sids[e.Name()] = true
 		}
 	}
 	m.Lines = len(m.Files)
@@ -198,10 +194,12 @@ func parseManifest(text string) *manifest {
 			m.Files = append(m.Files, fileEnt{Proj: parts[1], Rel: parts[2], Size: size, TS: parts[4]})
 			m.Lines++
 		case parts[0] == "D" && len(parts) == 3:
-			if m.Sids[parts[1]] == nil {
-				m.Sids[parts[1]] = map[string]bool{}
+			sids := m.Sids[parts[1]]
+			if sids == nil {
+				sids = map[string]bool{}
+				m.Sids[parts[1]] = sids
 			}
-			m.Sids[parts[1]][parts[2]] = true
+			sids[parts[2]] = true
 			m.Lines++
 		}
 	}
@@ -223,27 +221,32 @@ const (
 )
 
 // decide is the per-file three-way decision. base ts "" means not in base.
-func decide(l, h *fileEnt, baseTS string) action {
+// The returned entry is the side whose timestamp the plan records as the
+// agreed state (nil for deletions). Both sides nil is the caller's "gone
+// everywhere" case: no action, no entry.
+func decide(l, h *fileEnt, baseTS string) (action, *fileEnt) {
 	switch {
 	case l != nil && h != nil:
 		switch {
 		case l.TS > h.TS:
-			return actPush
+			return actPush, l
 		case h.TS > l.TS:
-			return actPull
+			return actPull, h
 		default:
-			return actSame
+			return actSame, l
 		}
 	case l != nil:
 		if baseTS != "" && l.TS <= baseTS {
-			return actDelLocal // hub deleted it
+			return actDelLocal, nil // hub deleted it
 		}
-		return actPushNew
-	default: // h != nil
+		return actPushNew, l
+	case h != nil:
 		if baseTS != "" && h.TS <= baseTS {
-			return actDelHub // local deleted it
+			return actDelHub, nil // local deleted it
 		}
-		return actPullNew
+		return actPullNew, h
+	default:
+		return actSame, nil
 	}
 }
 
@@ -363,21 +366,20 @@ func buildPlan(local, hub *manifest, base map[string]map[string]string, lpre, hp
 			if bm := base[c]; bm != nil {
 				bts = bm[r]
 			}
-			act := decide(l, h, bts)
+			act, win := decide(l, h, bts)
 			kinds[act] = true
 			switch act {
 			case actPush, actPushNew:
 				pp.Push = append(pp.Push, r)
-				pp.Final = append(pp.Final, relTS{r, l.TS})
 			case actPull, actPullNew:
 				pp.Pull = append(pp.Pull, r)
-				pp.Final = append(pp.Final, relTS{r, h.TS})
 			case actDelHub:
 				pp.DelHub = append(pp.DelHub, r)
 			case actDelLocal:
 				pp.DelLocal = append(pp.DelLocal, r)
-			case actSame:
-				pp.Final = append(pp.Final, relTS{r, l.TS})
+			}
+			if win != nil { // the surviving side's timestamp becomes the agreed state
+				pp.Final = append(pp.Final, relTS{r, win.TS})
 			}
 			if l != nil {
 				pp.LMax = maxStr(pp.LMax, l.TS)
@@ -449,23 +451,26 @@ func readBase(path string) (map[string]map[string]string, bool) {
 		if len(parts) != 3 {
 			continue
 		}
-		if base[parts[0]] == nil {
-			base[parts[0]] = map[string]string{}
+		proj := base[parts[0]]
+		if proj == nil {
+			proj = map[string]string{}
+			base[parts[0]] = proj
 		}
-		base[parts[0]][parts[1]] = parts[2]
+		proj[parts[1]] = parts[2]
 	}
 	return base, true
 }
 
 func writeBase(path string, p *plan) error {
 	var b strings.Builder
-	for _, pp := range p.Projects {
+	for i := range p.Projects {
+		pp := &p.Projects[i]
 		for _, ft := range pp.Final {
 			fmt.Fprintf(&b, "%s\t%s\t%s\n", pp.Canon, ft.Rel, ft.TS)
 		}
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

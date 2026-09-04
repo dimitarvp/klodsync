@@ -31,7 +31,7 @@ func TestDecide(t *testing.T) {
 		{"local only, OLDER than base -> still deletion", fe(older), nil, base, actDelLocal},
 	}
 	for _, c := range cases {
-		if got := decide(c.l, c.h, c.baseTS); got != c.want {
+		if got, _ := decide(c.l, c.h, c.baseTS); got != c.want {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
 	}
@@ -72,7 +72,7 @@ func TestLastTS(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {
 		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		return p

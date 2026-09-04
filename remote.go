@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,10 +19,10 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// hubScript runs a POSIX sh script on the hub with HUBROOT/HUBJSON set.
-// stdin, when non-nil, is streamed to the script (kept separate from the
-// script text, so data can never be eaten as code).
-func hubScript(cfg *config, script string, stdin io.Reader) (string, error) {
+// hubScript runs a POSIX sh script on the hub with HUBROOT/HUBJSON set. Data
+// travels through files and rsync, never through the script text, so nothing
+// read from a machine can be eaten as code.
+func hubScript(cfg *config, script string) (string, error) {
 	var cmd *exec.Cmd
 	if cfg.Remote {
 		remote := fmt.Sprintf("HUBROOT='%s' HUBJSON='%s' sh -c %s", cfg.HRoot, cfg.HJSON, shellQuote(script))
@@ -32,15 +31,12 @@ func hubScript(cfg *config, script string, stdin io.Reader) (string, error) {
 		cmd = exec.Command("sh", "-c", script)
 		cmd.Env = append(os.Environ(), "HUBROOT="+cfg.HRoot, "HUBJSON="+cfg.HJSON)
 	}
-	if stdin != nil {
-		cmd.Stdin = stdin
-	}
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	err := cmd.Run()
 	if err != nil {
-		return out.String(), fmt.Errorf("hub script failed: %v: %s", err, strings.TrimSpace(errb.String()))
+		return out.String(), fmt.Errorf("hub script failed: %w: %s", err, strings.TrimSpace(errb.String()))
 	}
 	return out.String(), nil
 }
@@ -58,7 +54,7 @@ func hubPerl(cfg *config, program string) (string, error) {
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("hub manifest failed: %v: %s", err, strings.TrimSpace(errb.String()))
+		return "", fmt.Errorf("hub manifest failed: %w: %s", err, strings.TrimSpace(errb.String()))
 	}
 	return out.String(), nil
 }
@@ -87,17 +83,13 @@ func runCmd(name string, args ...string) error {
 // rsyncFiles transfers the relpaths in list (one per line) from src root to
 // dst root. Locks and .DS_Store never travel, matching the manifests.
 func rsyncFiles(cfg *config, listPath, src, dst string) error {
-	args := []string{"-a", "-r", "--exclude=.DS_Store", "--exclude=*.lock", "--files-from=" + listPath}
-	args = append(args, rsyncE(cfg)...)
-	args = append(args, src+"/", dst+"/")
-	return runCmd("rsync", args...)
+	args := append([]string{"-a", "-r", "--exclude=.DS_Store", "--exclude=*.lock", "--files-from=" + listPath}, rsyncE(cfg)...)
+	return runCmd("rsync", append(args, src+"/", dst+"/")...)
 }
 
 func rsyncOne(cfg *config, src, dst string) error {
-	args := []string{"-a"}
-	args = append(args, rsyncE(cfg)...)
-	args = append(args, src, dst)
-	return runCmd("rsync", args...)
+	args := append([]string{"-a"}, rsyncE(cfg)...)
+	return runCmd("rsync", append(args, src, dst)...)
 }
 
 // ── deletions ────────────────────────────────────────────────────

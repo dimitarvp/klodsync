@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,14 +13,14 @@ import (
 )
 
 func buckets(cfg *config) error {
-	if _, err := hubScript(cfg, `mkdir -p "$HUBROOT/hooks" "$HUBROOT/skills" "$HUBROOT/plugins"`, nil); err != nil {
+	if _, err := hubScript(cfg, `mkdir -p "$HUBROOT/hooks" "$HUBROOT/skills" "$HUBROOT/plugins"`); err != nil {
 		return err
 	}
 	base := []string{"--exclude=*.bak*", "--exclude=.DS_Store", "--exclude=statusline.sh"}
 	pluginEx := []string{"--exclude=installed_plugins.json", "--exclude=known_marketplaces.json"}
 	for _, bucket := range []string{"hooks", "skills", "plugins"} {
 		src := filepath.Join(cfg.LRoot, bucket)
-		if err := os.MkdirAll(src, 0o755); err != nil {
+		if err := os.MkdirAll(src, 0o750); err != nil {
 			return err
 		}
 		ex := append([]string{}, base...)
@@ -31,7 +32,8 @@ func buckets(cfg *config) error {
 			{hubArg(cfg) + "/" + bucket, src},
 			{src, hubArg(cfg) + "/" + bucket},
 		} {
-			args := []string{"-au", "-r"}
+			args := make([]string, 0, 2+len(ex)+2+2)
+			args = append(args, "-au", "-r")
 			args = append(args, ex...)
 			args = append(args, rsyncE(cfg)...)
 			args = append(args, dir[0]+"/", dir[1]+"/")
@@ -72,7 +74,7 @@ f="$HUBROOT/`+rel+`"
 if [ -f "$f" ]; then
 	printf "%s " "$(cksum < "$f" | awk "{print \$1\":\"\$2}")"
 	stat -c %Y "$f" 2>/dev/null || stat -f %m "$f"
-else echo "missing 0"; fi`, nil)
+else echo "missing 0"; fi`)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "  %s: hub probe failed, skipped (%v)\n", rel, err)
 		return
@@ -125,7 +127,7 @@ func jqTo(out *bytes.Buffer, stdin []byte, args ...string) error {
 	var errb bytes.Buffer
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("jq: %v: %s", err, strings.TrimSpace(errb.String()))
+		return fmt.Errorf("jq: %w: %s", err, strings.TrimSpace(errb.String()))
 	}
 	return nil
 }
@@ -134,7 +136,7 @@ func jqTo(out *bytes.Buffer, stdin []byte, args ...string) error {
 // (each side keeps its own path format), newest mtime wins, receiver rewritten.
 func pluginMetaSync(cfg *config, rel string) {
 	lf := filepath.Join(cfg.LRoot, rel)
-	hubRaw, err := hubScript(cfg, `cat "$HUBROOT/`+rel+`" 2>/dev/null || true`, nil)
+	hubRaw, err := hubScript(cfg, `cat "$HUBROOT/`+rel+`" 2>/dev/null || true`)
 	if err != nil {
 		return
 	}
@@ -169,13 +171,13 @@ f="$HUBROOT/`+rel+`"
 tmp="$(mktemp)"
 jq --arg from "`+cfg.LHome+`" --arg to "`+cfg.HHome+`" \
   "walk(if type == \"string\" and startswith(\$from) then \$to + ltrimstr(\$from) else . end)" \
-  "$f" > "$tmp" && [ -s "$tmp" ] && mv "$tmp" "$f" || rm -f "$tmp"`, nil)
+  "$f" > "$tmp" && [ -s "$tmp" ] && mv "$tmp" "$f" || rm -f "$tmp"`)
 	}
 	report := func(dir string) { fmt.Printf("  %s: %s\n", rel, dir) }
 	switch {
 	case lErr != nil:
-		if err := os.MkdirAll(filepath.Dir(lf), 0o755); err == nil {
-			if os.WriteFile(lf, hubNorm.Bytes(), 0o644) == nil {
+		if err := os.MkdirAll(filepath.Dir(lf), 0o750); err == nil {
+			if os.WriteFile(lf, hubNorm.Bytes(), 0o600) == nil {
 				report("← hub (missing here)")
 			}
 		}
@@ -189,7 +191,7 @@ jq --arg from "`+cfg.LHome+`" --arg to "`+cfg.HHome+`" \
 		if err != nil {
 			return
 		}
-		hmtS, err := hubScript(cfg, `f="$HUBROOT/`+rel+`"; stat -c %Y "$f" 2>/dev/null || stat -f %m "$f"`, nil)
+		hmtS, err := hubScript(cfg, `f="$HUBROOT/`+rel+`"; stat -c %Y "$f" 2>/dev/null || stat -f %m "$f"`)
 		if err != nil {
 			return
 		}
@@ -201,7 +203,7 @@ jq --arg from "`+cfg.LHome+`" --arg to "`+cfg.HHome+`" \
 				report("→ hub (newer here)")
 			}
 		} else {
-			if os.WriteFile(lf, hubNorm.Bytes(), 0o644) == nil {
+			if os.WriteFile(lf, hubNorm.Bytes(), 0o600) == nil {
 				report("← hub (newer there)")
 			}
 		}
@@ -210,12 +212,12 @@ jq --arg from "`+cfg.LHome+`" --arg to "`+cfg.HHome+`" \
 
 func historyUnion(cfg *config) error {
 	histL := filepath.Join(cfg.LRoot, "history.jsonl")
-	hubRaw, err := hubScript(cfg, `cat "$HUBROOT/history.jsonl" 2>/dev/null || true`, nil)
+	hubRaw, err := hubScript(cfg, `cat "$HUBROOT/history.jsonl" 2>/dev/null || true`)
 	if err != nil {
 		return err
 	}
 	if _, err := os.Stat(histL); err != nil {
-		if err := os.WriteFile(histL, nil, 0o644); err != nil {
+		if err := os.WriteFile(histL, nil, 0o600); err != nil {
 			return err
 		}
 	}
@@ -224,7 +226,7 @@ func historyUnion(cfg *config) error {
 		return nil
 	}
 	hubFile := filepath.Join(cfg.Work, "hub.history.jsonl")
-	if err := os.WriteFile(hubFile, []byte(hubRaw), 0o644); err != nil {
+	if err := os.WriteFile(hubFile, []byte(hubRaw), 0o600); err != nil {
 		return err
 	}
 	var merged bytes.Buffer
@@ -235,10 +237,10 @@ func historyUnion(cfg *config) error {
 		return nil
 	}
 	mergedFile := filepath.Join(cfg.Work, "history.merged")
-	if err := os.WriteFile(mergedFile, merged.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(mergedFile, merged.Bytes(), 0o600); err != nil {
 		return err
 	}
-	if err := os.WriteFile(histL, merged.Bytes(), 0o644); err != nil {
+	if err := os.WriteFile(histL, merged.Bytes(), 0o600); err != nil {
 		return err
 	}
 	if cfg.Remote {
@@ -246,7 +248,7 @@ func historyUnion(cfg *config) error {
 			return err
 		}
 	} else {
-		if err := os.WriteFile(filepath.Join(cfg.HRoot, "history.jsonl"), merged.Bytes(), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(cfg.HRoot, "history.jsonl"), merged.Bytes(), 0o600); err != nil {
 			return err
 		}
 	}
@@ -291,15 +293,20 @@ func makeAliases(cfg *config) {
 // ── adopt ────────────────────────────────────────────────────────
 
 func adopt(cfg *config, target string) error {
+	// target is one bare directory name under projects/; a path separator or a
+	// dot-name would let a typo walk out of the tree.
+	if target == "" || target == "." || target == ".." || strings.ContainsAny(target, `/\`) {
+		return fmt.Errorf("adopt: target must be a bare project dir name, got %q", target)
+	}
 	p := filepath.Join(cfg.LRoot, "projects", target)
 	if _, err := os.Lstat(p); err != nil {
 		return fmt.Errorf("no such project dir: %s", p)
 	}
-	real, err := filepath.EvalSymlinks(p)
+	realPath, err := filepath.EvalSymlinks(p)
 	if err != nil {
 		return err
 	}
-	realName := filepath.Base(real)
+	realName := filepath.Base(realPath)
 
 	if cfg.HHome == cfg.LHome {
 		fmt.Println("hub and local $HOME match — nothing to rewrite.")
@@ -311,21 +318,32 @@ func adopt(cfg *config, target string) error {
 		toCwd := []byte(`"cwd":"` + cfg.LHome + `/`)
 		fromOP := []byte(`"originalPath":"` + cfg.HHome + `/`)
 		toOP := []byte(`"originalPath":"` + cfg.LHome + `/`)
-		err := filepath.Walk(real, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
+		// Root-scoped: every read and write stays inside the project dir even if
+		// a symlink appears under it mid-walk.
+		root, err := os.OpenRoot(realPath)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = root.Close() }()
+		err = fs.WalkDir(root.FS(), ".", func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
 				return nil
 			}
 			if !strings.HasSuffix(path, ".jsonl") && !strings.HasSuffix(path, ".json") {
 				return nil
 			}
-			data, err := os.ReadFile(path)
+			info, err := d.Info()
+			if err != nil {
+				return nil
+			}
+			data, err := root.ReadFile(path)
 			if err != nil {
 				return nil
 			}
 			out := bytes.ReplaceAll(data, fromCwd, toCwd)
 			out = bytes.ReplaceAll(out, fromOP, toOP)
 			if !bytes.Equal(out, data) {
-				if err := os.WriteFile(path, out, info.Mode()); err != nil {
+				if err := root.WriteFile(path, out, info.Mode()); err != nil {
 					return err
 				}
 				n++
@@ -342,7 +360,7 @@ func adopt(cfg *config, target string) error {
 		alias := cfg.LPrefix + strings.TrimPrefix(realName, cfg.HPrefix)
 		aliasPath := filepath.Join(cfg.LRoot, "projects", alias)
 		if _, err := os.Lstat(aliasPath); err != nil {
-			if os.Symlink(real, aliasPath) == nil {
+			if os.Symlink(realPath, aliasPath) == nil {
 				fmt.Printf("  alias: %s -> %s\n", alias, realName)
 			}
 		}
@@ -377,10 +395,10 @@ func jqFile2(in, out, prog string, opts ...string) error {
 	cmd.Stdout = &buf
 	cmd.Stderr = &errb
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("jq failed: %v: %s", err, strings.TrimSpace(errb.String()))
+		return fmt.Errorf("jq failed: %w: %s", err, strings.TrimSpace(errb.String()))
 	}
 	if buf.Len() == 0 {
 		return fmt.Errorf("jq produced empty output for %s", in)
 	}
-	return os.WriteFile(out, buf.Bytes(), 0o644)
+	return os.WriteFile(out, buf.Bytes(), 0o600)
 }

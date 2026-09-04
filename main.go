@@ -172,7 +172,7 @@ func main() {
 	cfg.BaseFile = filepath.Join(cfg.StateDir, "base."+hubKey(cfg)+".tsv")
 	cfg.LockFile = filepath.Join(cfg.StateDir, "klodsync.lock")
 
-	if err := os.MkdirAll(cfg.StateDir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StateDir, 0o750); err != nil {
 		fatal("state dir: %v", err)
 	}
 
@@ -236,7 +236,7 @@ func runLocked(cfg *config, verb, adoptTarget string) int {
 // -9), so there is nothing stale to detect or reclaim. The returned file must
 // stay open for as long as the lock is needed.
 func acquireLock(path string, shared bool) (*os.File, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}

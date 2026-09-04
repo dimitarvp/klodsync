@@ -54,7 +54,8 @@ func sync(cfg *config, verb string) error {
 	// ── status table ────────────────────────────────────────────
 	fmt.Println()
 	rows := [][]string{{"PROJECT", "LOCAL", "HUB", "VERDICT", "CHANGES"}}
-	for _, pp := range p.Projects {
+	for i := range p.Projects {
+		pp := &p.Projects[i]
 		ch := fmt.Sprintf("↑%d ↓%d", len(pp.Push), len(pp.Pull))
 		if len(pp.DelHub) > 0 {
 			ch += fmt.Sprintf(" ✗hub:%d", len(pp.DelHub))
@@ -69,7 +70,8 @@ func sync(cfg *config, verb string) error {
 
 	var unions []string
 	totPush, totPull, totDelH, totDelL := 0, 0, 0, 0
-	for _, pp := range p.Projects {
+	for i := range p.Projects {
+		pp := &p.Projects[i]
 		totPush += len(pp.Push)
 		totPull += len(pp.Pull)
 		totDelH += len(pp.DelHub)
@@ -110,7 +112,8 @@ func sync(cfg *config, verb string) error {
 	// ── transfers (same-name batched; cross-name per-project) ────
 	t1 := time.Now()
 	var pushList, pullList []string
-	for _, pp := range p.Projects {
+	for i := range p.Projects {
+		pp := &p.Projects[i]
 		sameName := pp.HDir == "" || pp.LDir == "" || pp.HDir == pp.LDir
 		if !sameName {
 			continue
@@ -125,7 +128,7 @@ func sync(cfg *config, verb string) error {
 				pullList = append(pullList, "projects/"+pp.HDir+"/"+r)
 			}
 			if len(pp.Pull) > 0 {
-				if err := os.MkdirAll(filepath.Join(cfg.LRoot, "projects", pp.HDir), 0o755); err != nil {
+				if err := os.MkdirAll(filepath.Join(cfg.LRoot, "projects", pp.HDir), 0o750); err != nil {
 					return err
 				}
 			}
@@ -156,7 +159,8 @@ func sync(cfg *config, verb string) error {
 	}
 
 	// cross-name projects (same project, different dir names per side)
-	for _, pp := range p.Projects {
+	for i := range p.Projects {
+		pp := &p.Projects[i]
 		if pp.LDir == "" || pp.HDir == "" || pp.LDir == pp.HDir {
 			continue
 		}
@@ -173,7 +177,8 @@ func sync(cfg *config, verb string) error {
 
 	// ── deletions (validated relpaths only; fail closed) ─────────
 	var delHub, delLocal []string
-	for _, pp := range p.Projects {
+	for i := range p.Projects {
+		pp := &p.Projects[i]
 		if pp.HDir != "" {
 			for _, r := range pp.DelHub {
 				delHub = append(delHub, "projects/"+pp.HDir+"/"+r)
@@ -242,7 +247,8 @@ func sidSets(p *plan) (push, pull, delH, delL map[string]bool) {
 			}
 		}
 	}
-	for _, pp := range p.Projects {
+	for i := range p.Projects {
+		pp := &p.Projects[i]
 		collect(pp.Push, push)
 		collect(pp.Pull, pull)
 		collect(pp.DelHub, delH)
@@ -256,7 +262,7 @@ func transferList(cfg *config, rels []string, name, src, dst string) error {
 		return nil
 	}
 	listPath := filepath.Join(cfg.Work, name)
-	if err := os.WriteFile(listPath, []byte(strings.Join(rels, "\n")+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(listPath, []byte(strings.Join(rels, "\n")+"\n"), 0o600); err != nil {
 		return err
 	}
 	return rsyncFiles(cfg, listPath, src, dst)
@@ -295,11 +301,12 @@ func versionWarn(cfg *config) {
 		return
 	}
 	lv := firstLine(exec.Command("claude", "--version"))
-	hvOut, err := hubScript(cfg, `claude --version 2>/dev/null || "$HOME"/.local/bin/claude --version 2>/dev/null || true`, nil)
+	hvOut, err := hubScript(cfg, `claude --version 2>/dev/null || "$HOME"/.local/bin/claude --version 2>/dev/null || true`)
 	if err != nil {
 		return
 	}
-	hv := strings.TrimSpace(strings.SplitN(hvOut, "\n", 2)[0])
+	first, _, _ := strings.Cut(hvOut, "\n")
+	hv := strings.TrimSpace(first)
 	if lv != "" && hv != "" && lv != hv {
 		fmt.Printf("  WARNING: Claude Code versions differ — local '%s' vs hub '%s'.\n", lv, hv)
 		fmt.Println("           Transcript format is version-internal; storing as archive is fine,")
@@ -312,7 +319,8 @@ func firstLine(cmd *exec.Cmd) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	first, _, _ := strings.Cut(string(out), "\n")
+	return strings.TrimSpace(first)
 }
 
 // ── ~/.claude.json whitelist merge ───────────────────────────────
@@ -378,7 +386,7 @@ type entryEdit struct {
 }
 
 func mergeProjectEntries(cfg *config, p *plan) error {
-	hubJSON, err := hubScript(cfg, `cat "$HUBJSON" 2>/dev/null || echo "{}"`, nil)
+	hubJSON, err := hubScript(cfg, `cat "$HUBJSON" 2>/dev/null || echo "{}"`)
 	if err != nil {
 		return err
 	}
@@ -417,7 +425,8 @@ func mergeProjectEntries(cfg *config, p *plan) error {
 	}
 
 	var localEdits, hubEdits []entryEdit
-	for _, pp := range p.Projects {
+	for i := range p.Projects {
+		pp := &p.Projects[i]
 		if pp.Verdict == "clean" {
 			continue
 		}
@@ -468,7 +477,7 @@ func mergeProjectEntries(cfg *config, p *plan) error {
 		if _, err := os.Stat(cfg.LJSON); err == nil {
 			ej, _ := json.Marshal(localEdits)
 			edFile := filepath.Join(cfg.Work, "local_edits.json")
-			if err := os.WriteFile(edFile, ej, 0o644); err != nil {
+			if err := os.WriteFile(edFile, ej, 0o600); err != nil {
 				return err
 			}
 			tmp := filepath.Join(cfg.Work, "lj.new")
@@ -484,11 +493,11 @@ func mergeProjectEntries(cfg *config, p *plan) error {
 	if len(hubEdits) > 0 {
 		ej, _ := json.Marshal(hubEdits)
 		edFile := filepath.Join(cfg.Work, "hub_edits.json")
-		if err := os.WriteFile(edFile, ej, 0o644); err != nil {
+		if err := os.WriteFile(edFile, ej, 0o600); err != nil {
 			return err
 		}
 		if cfg.Remote {
-			htmp, err := hubScript(cfg, "mktemp", nil)
+			htmp, err := hubScript(cfg, "mktemp")
 			if err != nil {
 				return err
 			}
@@ -503,7 +512,7 @@ jq --slurpfile edits "` + htmp + `" \
   '` + reduceProg + `' \
   "$HUBJSON" > "$tmp" && [ -s "$tmp" ] && mv "$tmp" "$HUBJSON" || rm -f "$tmp"
 rm -f "` + htmp + `"`
-			if _, err := hubScript(cfg, script, nil); err != nil {
+			if _, err := hubScript(cfg, script); err != nil {
 				return err
 			}
 		} else if _, err := os.Stat(cfg.HJSON); err == nil {
