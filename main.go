@@ -187,13 +187,6 @@ func main() {
 // runLocked takes the per-machine lock, does the work and returns the exit
 // code; every deferred cleanup runs before main exits.
 func runLocked(cfg *config, verb, adoptTarget string) int {
-	// The bash oracle (claude_sync) locks with a mkdir at StateDir/lock. If
-	// that dir exists it is a live oracle run or its leftover: refuse, never
-	// guess from its age.
-	legacy := filepath.Join(cfg.StateDir, "lock")
-	if _, err := os.Stat(legacy); err == nil {
-		fatal("legacy lock dir %s exists: a claude_sync (bash) run holds it, or it is a leftover; if `pgrep -x claude_sync` shows nothing, remove the dir and retry", legacy)
-	}
 	lf, err := acquireLock(cfg.LockFile, verb == "status")
 	if err != nil {
 		if verb == "status" {
@@ -263,8 +256,8 @@ func fatal(format string, a ...any) {
 	os.Exit(1)
 }
 
-// hubKey matches the bash tool exactly: `echo "host:root" | cksum | cut -d' ' -f1`
-// so klodsync and claude_sync share state files.
+// hubKey is `echo "host:root" | cksum | cut -d' ' -f1`, kept identical to the retired
+// bash implementation so the base files it wrote stay valid.
 func hubKey(cfg *config) string {
 	cmd := exec.Command("cksum")
 	cmd.Stdin = strings.NewReader(cfg.HHost + ":" + cfg.HRoot + "\n")
