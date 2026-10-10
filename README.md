@@ -14,9 +14,10 @@ direction, no matter which machine starts the sync.
 ## Usage
 
 ```
-klodsync status              per-project verdicts, changes nothing
-klodsync run [--dry-run]     sync both directions
-klodsync adopt <project>     make a project from another machine resumable here
+klodsync status                per-project verdicts, changes nothing
+klodsync run [--dry-run]       sync both directions
+klodsync adopt <project>       make a project from another machine resumable here
+klodsync localize [--dry-run]  move folders pulled by older versions under this machine's name
 
 --hub HOST:DIR | DIR         default robeast:.claude ($CLAUDE_SYNC_HUB)
 --allow-mass-delete          override the refusal to delete >50% of a side
@@ -40,6 +41,17 @@ The `.claude.json` per-project entries (trust, permissions, MCP servers,
 last session) move with their project. Prompt history merges as a union.
 Hooks, skills, and plugin files sync newest-per-file.
 
+Each side stores a project in a real folder named by its own path: a pull
+lands under this machine's name (`-home-you-...` on Linux for a project the
+hub stores as `-Users-you-...`), a push under the hub machine's name, never
+the other side's name and never a symlink. Claude Code's `--continue`,
+`--resume` and the `/resume` picker find sessions only in the folder named by
+the local path, so a session exited on one machine continues on the other
+after a sync. Both names stay in sync as one project. Versions before 0.1.6
+stored the other side's name plus a symlink; `klodsync localize` renames those
+folders and removes the symlinks, and refuses to guess when a folder already
+exists under both names.
+
 ## Requirements
 
 Local machine: ssh, rsync, jq, perl, cksum. Hub: stock sh, perl, jq, rsync —
@@ -56,8 +68,8 @@ go install github.com/dimitarvp/klodsync@latest
 `go test ./...` covers the per-file decision engine and the transcript
 parsing edge cases (timestamp-less final lines, >64KB lines).
 
-`tests/gauntlet.sh` is the behavior suite: 65 checks across 18 scenarios
-(stale machines, divergence, deletions, adopt, live sessions) run against
+`tests/gauntlet.sh` is the behavior suite: 98 checks across 21 scenarios
+(stale machines, divergence, deletions, adopt, localize, live sessions) run against
 synthetic machines in a temp dir — no ssh, no real `~/.claude`. It builds
 the current source by default; `CS=/path/to/tool` tests any other
 implementation of the same CLI.

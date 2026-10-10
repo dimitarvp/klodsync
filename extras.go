@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -256,40 +255,6 @@ func historyUnion(cfg *config) error {
 	return nil
 }
 
-func makeAliases(cfg *config) {
-	if cfg.LPrefix == cfg.HPrefix {
-		return
-	}
-	pdir := filepath.Join(cfg.LRoot, "projects")
-	entries, err := os.ReadDir(pdir)
-	if err != nil {
-		return
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		full := filepath.Join(pdir, name)
-		st, err := os.Lstat(full)
-		if err != nil || !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
-			continue
-		}
-		if !strings.HasPrefix(name, cfg.HPrefix) {
-			continue
-		}
-		alias := cfg.LPrefix + strings.TrimPrefix(name, cfg.HPrefix)
-		aliasPath := filepath.Join(pdir, alias)
-		if _, err := os.Lstat(aliasPath); err == nil {
-			continue
-		}
-		if os.Symlink(full, aliasPath) == nil {
-			fmt.Printf("  alias: %s -> %s\n", alias, name)
-		}
-	}
-}
-
 // ── adopt ────────────────────────────────────────────────────────
 
 func adopt(cfg *config, target string) error {
@@ -356,17 +321,10 @@ func adopt(cfg *config, target string) error {
 		fmt.Printf("  rewrote %d files\n", n)
 	}
 
-	if strings.HasPrefix(realName, cfg.HPrefix) && cfg.LPrefix != cfg.HPrefix {
-		alias := cfg.LPrefix + strings.TrimPrefix(realName, cfg.HPrefix)
-		aliasPath := filepath.Join(cfg.LRoot, "projects", alias)
-		if _, err := os.Lstat(aliasPath); err != nil {
-			if os.Symlink(realPath, aliasPath) == nil {
-				fmt.Printf("  alias: %s -> %s\n", alias, realName)
-			}
-		}
-	}
-
 	if _, err := os.Stat(cfg.LJSON); err == nil && cfg.HHome != cfg.LHome {
+		// The hub's entry is keyed by the hub path, whatever slug the folder
+		// carries here: look it up by the project's hub-side name.
+		hubName := cfg.HPrefix + canonOf(realName, cfg.LPrefix, cfg.HPrefix)
 		prog := `
 def m(p): p | gsub("[/.]"; "-");
 (.projects // {}) as $p
@@ -376,7 +334,7 @@ def m(p): p | gsub("[/.]"; "-");
   end`
 		tmp := filepath.Join(cfg.Work, "adopt.json")
 		err := jqFile2(cfg.LJSON, tmp, prog,
-			"--arg", "hh", cfg.HHome, "--arg", "lh", cfg.LHome, "--arg", "real", realName)
+			"--arg", "hh", cfg.HHome, "--arg", "lh", cfg.LHome, "--arg", "real", hubName)
 		if err == nil {
 			if os.Rename(tmp, cfg.LJSON) == nil {
 				fmt.Printf("  .claude.json entry cloned under %s path\n", cfg.LHome)

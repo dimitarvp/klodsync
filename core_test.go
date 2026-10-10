@@ -138,6 +138,30 @@ func TestMungeCanon(t *testing.T) {
 	}
 }
 
+// The folder name the other side gives a project: its slug swapped in and
+// nothing else touched, in both directions. canonOf(sideName(n)) == canonOf(n)
+// keeps the plan and the base file at one project.
+func TestSideName(t *testing.T) {
+	lpre, hpre := munge("/home/dimi"), munge("/Users/dimi")
+	cases := []struct{ name, in, from, to, want string }{
+		{"pull: hub slug -> local slug", "-Users-dimi-kod-x", hpre, lpre, "-home-dimi-kod-x"},
+		{"push: local slug -> hub slug", "-home-dimi-kod-x", lpre, hpre, "-Users-dimi-kod-x"},
+		{"pull: already local", "-home-dimi-kod-x", hpre, lpre, "-home-dimi-kod-x"},
+		{"push: legacy folder already hub-named", "-Users-dimi-kod-x", lpre, hpre, "-Users-dimi-kod-x"},
+		{"third machine's slug", "-var-home-user-x", hpre, lpre, "-var-home-user-x"},
+		{"same $HOME both sides", "-home-dimi-kod-x", lpre, lpre, "-home-dimi-kod-x"},
+	}
+	for _, c := range cases {
+		got := sideName(c.in, c.from, c.to)
+		if got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
+		if canonOf(got, lpre, hpre) != canonOf(c.in, lpre, hpre) {
+			t.Errorf("%s: canon changed: %q vs %q", c.name, canonOf(got, lpre, hpre), canonOf(c.in, lpre, hpre))
+		}
+	}
+}
+
 func TestOrderedProjects(t *testing.T) {
 	raw := []byte(`{"other":1,"projects":{"/b/two":{"lastSessionId":"2"},"/a/one":{"lastSessionId":"1"}},"tail":true}`)
 	got := orderedProjects(raw)

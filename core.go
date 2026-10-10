@@ -279,6 +279,18 @@ func canonOf(name, lpre, hpre string) string {
 	return name
 }
 
+// sideName is the folder name one side gives a project the other side stores
+// under its $HOME slug: the `from` prefix swapped for `to`. A name without the
+// `from` prefix (same $HOME on both sides, or a third machine's slug) comes
+// back unchanged. canonOf(sideName(n)) == canonOf(n) holds, so the plan and
+// the base file keep seeing one project whichever name each side uses.
+func sideName(name, from, to string) string {
+	if from != to && strings.HasPrefix(name, from) {
+		return to + strings.TrimPrefix(name, from)
+	}
+	return name
+}
+
 func buildPlan(local, hub *manifest, base map[string]map[string]string, lpre, hpre string) *plan {
 	type side struct {
 		dir   string

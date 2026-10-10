@@ -109,6 +109,21 @@ func sync(cfg *config, verb string) error {
 	// ── sid direction map: satellite dirs follow their transcripts ─
 	pushSids, pullSids, delHSids, delLSids := sidSets(p)
 
+	// ── each side stores a project under ITS OWN slug ────────────
+	// Claude Code resumes sessions only from the real folder named by the
+	// local path, on the hub machine as much as here: a new pull lands under
+	// this machine's slug, a new push under the hub's. The verdicts above
+	// already read an empty side as "new there", so this runs after them.
+	for i := range p.Projects {
+		pp := &p.Projects[i]
+		switch {
+		case pp.LDir == "" && pp.HDir != "":
+			pp.LDir = sideName(pp.HDir, cfg.HPrefix, cfg.LPrefix)
+		case pp.HDir == "" && pp.LDir != "":
+			pp.HDir = sideName(pp.LDir, cfg.LPrefix, cfg.HPrefix)
+		}
+	}
+
 	// ── transfers (same-name batched; cross-name per-project) ────
 	t1 := time.Now()
 	var pushList, pullList []string
@@ -163,6 +178,11 @@ func sync(cfg *config, verb string) error {
 		pp := &p.Projects[i]
 		if pp.LDir == "" || pp.HDir == "" || pp.LDir == pp.HDir {
 			continue
+		}
+		if len(pp.Pull) > 0 {
+			if err := os.MkdirAll(filepath.Join(cfg.LRoot, "projects", pp.LDir), 0o750); err != nil {
+				return err
+			}
 		}
 		if err := transferList(cfg, pp.Pull, "xpull.list",
 			hubArg(cfg)+"/projects/"+pp.HDir, filepath.Join(cfg.LRoot, "projects", pp.LDir)); err != nil {
@@ -228,7 +248,6 @@ func sync(cfg *config, verb string) error {
 	if err := historyUnion(cfg); err != nil {
 		return err
 	}
-	makeAliases(cfg)
 
 	// ── record agreed state (only after full success) ────────────
 	if err := writeBase(cfg.BaseFile, p); err != nil {

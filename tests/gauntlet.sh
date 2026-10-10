@@ -74,7 +74,7 @@ run_on() { # run_on <machine-root> <hubdir> <verb> [flags...]
 treesum() { (cd "$1" && find . -type f,l | sort | xargs -r sha256sum 2>/dev/null | sha256sum | cut -c1-16); }
 
 # ══ T1: new-push + idempotency ═══════════════════════════════════
-say "── T1 new-push, satellites travel, second run clean"
+say "── T1 new-push lands under the hub's own slug, satellites travel, second run clean"
 fresh A
 HUB="$TESTROOT/hub"
 mkdir -p "$HUB/projects"
@@ -82,7 +82,8 @@ echo '{"oauthAccount":{"who":"hub"},"userID":"u-hub","projects":{}}' >"$HUB.json
 sess "$CR" "$LPRE-proj1" aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa \
 	2026-08-01T10:00:00.000Z 2026-08-01T11:00:00.000Z
 OUT="$(run_on "$M" "$HUB" run 2>&1)"
-check "transcript on hub" test -f "$HUB/projects/$LPRE-proj1/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa.jsonl"
+check "transcript on hub under the hub's slug" test -f "$HUB/projects/$HPRE-proj1/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa.jsonl"
+checknot "no local-slug folder on the hub" test -e "$HUB/projects/$LPRE-proj1"
 check "file-history on hub" test -f "$HUB/file-history/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/f1"
 check "tasks on hub" test -f "$HUB/tasks/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/t.json"
 check "verdict new-push" grep -q 'new-push' <<<"$OUT"
@@ -91,15 +92,16 @@ check "second run clean" grep -q 'clean' <<<"$OUT2"
 check "second run zero plan" grep -q 'plan: 0↑ 0↓ 0✗hub 0✗local' <<<"$OUT2"
 
 # ══ T2: new-pull of a hub-native (foreign-prefix) project ════════
-say "── T2 new-pull foreign project: alias + claude.json entry translated"
+say "── T2 new-pull foreign project: real folder under the local slug + claude.json entry translated"
 mkdir -p "$HUB/projects/$HPRE-proj2"
 printf '%s\n' '{"type":"user","cwd":"/Users/dimi/proj2","timestamp":"2026-08-02T09:00:00.000Z"}' \
 	>"$HUB/projects/$HPRE-proj2/bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb.jsonl"
 jq '.projects["/Users/dimi/proj2"] = {"allowedTools":["X"],"hasTrustDialogAccepted":true,"lastSessionId":"bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb","lastCost":9.99}' \
 	"$HUB.json" >"$HUB.json.t" && mv "$HUB.json.t" "$HUB.json"
 OUT="$(run_on "$M" "$HUB" run 2>&1)"
-check "pulled transcript" test -f "$CR/projects/$HPRE-proj2/bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb.jsonl"
-check "alias symlink created" test -L "$CR/projects/$LPRE-proj2"
+check "pulled transcript under the local slug" test -f "$CR/projects/$LPRE-proj2/bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb.jsonl"
+check "local-slug folder is real, not a symlink" test -d "$CR/projects/$LPRE-proj2" -a ! -L "$CR/projects/$LPRE-proj2"
+checknot "no folder under the hub's slug" test -e "$CR/projects/$HPRE-proj2"
 check "entry under local path" jq -e '.projects["/home/dimi/proj2"].allowedTools == ["X"]' "$CJ"
 check "metrics NOT copied" jq -e '.projects["/home/dimi/proj2"] | has("lastCost") | not' "$CJ"
 check "local auth untouched" jq -e '.userID == "u-A"' "$CJ"
@@ -110,9 +112,9 @@ fresh B
 run_on "$M" "$HUB" run >/dev/null 2>&1 # B baselines from hub (proj1+proj2)
 # hub advances proj1: sid gains a line + a brand-new session appears
 printf '%s\n' '{"type":"user","cwd":"/home/dimi/x","timestamp":"2026-08-10T08:00:00.000Z"}' \
-	>>"$HUB/projects/$LPRE-proj1/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa.jsonl"
+	>>"$HUB/projects/$HPRE-proj1/aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa.jsonl"
 printf '%s\n' '{"type":"user","cwd":"/home/dimi/x","timestamp":"2026-08-10T09:00:00.000Z"}' \
-	>"$HUB/projects/$LPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
+	>"$HUB/projects/$HPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
 HUBSUM_PRE="$(treesum "$HUB")"
 OUT="$(run_on "$M" "$HUB" run 2>&1)"
 check "B pulled the new session" test -f "$M/claude/projects/$LPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
@@ -125,11 +127,11 @@ checknot "no push happened" grep -qE 'plan: [1-9][0-9]*↑' <<<"$OUT"
 say "── T4 divergence: unique sessions both sides → union"
 sess "$TESTROOT/A/claude" "$LPRE-proj1" dddddddd-4444-4444-8444-dddddddddddd 2026-08-11T10:00:00.000Z # A-only
 printf '%s\n' '{"type":"user","cwd":"/home/dimi/x","timestamp":"2026-08-11T11:00:00.000Z"}' \
-	>"$HUB/projects/$LPRE-proj1/eeeeeeee-5555-4555-8555-eeeeeeeeeeee.jsonl" # hub-only
+	>"$HUB/projects/$HPRE-proj1/eeeeeeee-5555-4555-8555-eeeeeeeeeeee.jsonl" # hub-only
 OUT="$(run_on "$TESTROOT/A" "$HUB" run 2>&1)"
 check "union verdict announced" grep -q 'union' <<<"$OUT"
 check "A got hub-only session" test -f "$TESTROOT/A/claude/projects/$LPRE-proj1/eeeeeeee-5555-4555-8555-eeeeeeeeeeee.jsonl"
-check "hub got A-only session" test -f "$HUB/projects/$LPRE-proj1/dddddddd-4444-4444-8444-dddddddddddd.jsonl"
+check "hub got A-only session" test -f "$HUB/projects/$HPRE-proj1/dddddddd-4444-4444-8444-dddddddddddd.jsonl"
 check "nothing deleted anywhere" grep -qv '✗hub:[1-9]' <<<"$OUT"
 
 # ══ T5: deletion propagation via state, both directions ══════════
@@ -139,31 +141,31 @@ rm -f "$TESTROOT/A/claude/projects/$LPRE-proj1/dddddddd-4444-4444-8444-ddddddddd
 rm -rf "$TESTROOT/A/claude/file-history/dddddddd-4444-4444-8444-dddddddddddd" \
 	"$TESTROOT/A/claude/tasks/dddddddd-4444-4444-8444-dddddddddddd"
 OUT="$(run_on "$TESTROOT/A" "$HUB" run 2>&1)"
-check "hub transcript deleted" test ! -e "$HUB/projects/$LPRE-proj1/dddddddd-4444-4444-8444-dddddddddddd.jsonl"
+check "hub transcript deleted" test ! -e "$HUB/projects/$HPRE-proj1/dddddddd-4444-4444-8444-dddddddddddd.jsonl"
 check "hub file-history deleted" test ! -e "$HUB/file-history/dddddddd-4444-4444-8444-dddddddddddd"
 check "delete was reported" grep -qE '✗hub:[1-9]' <<<"$OUT"
 # hub-side delete propagates to A
-rm -f "$HUB/projects/$LPRE-proj1/eeeeeeee-5555-4555-8555-eeeeeeeeeeee.jsonl"
+rm -f "$HUB/projects/$HPRE-proj1/eeeeeeee-5555-4555-8555-eeeeeeeeeeee.jsonl"
 run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
 check "local transcript deleted" test ! -e "$TESTROOT/A/claude/projects/$LPRE-proj1/eeeeeeee-5555-4555-8555-eeeeeeeeeeee.jsonl"
 # modify-beats-delete: A deletes a file the hub has since advanced
 rm -f "$TESTROOT/A/claude/projects/$LPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
 printf '%s\n' '{"type":"user","cwd":"/home/dimi/x","timestamp":"2026-08-12T09:00:00.000Z"}' \
-	>>"$HUB/projects/$LPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
+	>>"$HUB/projects/$HPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
 run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
 check "advanced file resurrected, not deleted" grep -q '2026-08-12T09:00' \
 	"$TESTROOT/A/claude/projects/$LPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
-check "hub kept the advanced file" test -f "$HUB/projects/$LPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
+check "hub kept the advanced file" test -f "$HUB/projects/$HPRE-proj1/cccccccc-3333-4333-8333-cccccccccccc.jsonl"
 
 # ══ T6: same internal ts, different bytes → stable, untouched ════
 say "── T6 format-divergent but ts-equal files stay untouched"
 printf '%s\n' '{"type":"user","cwd":"/home/dimi/y","timestamp":"2026-08-13T10:00:00.000Z"}' \
 	>"$TESTROOT/A/claude/projects/$LPRE-proj1/ffffffff-6666-4666-8666-ffffffffffff.jsonl"
 printf '%s\n' '{"type":"user","cwd":"/Users/dimi/y","timestamp":"2026-08-13T10:00:00.000Z"}' \
-	>"$HUB/projects/$LPRE-proj1/ffffffff-6666-4666-8666-ffffffffffff.jsonl"
+	>"$HUB/projects/$HPRE-proj1/ffffffff-6666-4666-8666-ffffffffffff.jsonl"
 run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
 check "local kept its format" grep -q '/home/dimi/y' "$TESTROOT/A/claude/projects/$LPRE-proj1/ffffffff-6666-4666-8666-ffffffffffff.jsonl"
-check "hub kept its format" grep -q '/Users/dimi/y' "$HUB/projects/$LPRE-proj1/ffffffff-6666-4666-8666-ffffffffffff.jsonl"
+check "hub kept its format" grep -q '/Users/dimi/y' "$HUB/projects/$HPRE-proj1/ffffffff-6666-4666-8666-ffffffffffff.jsonl"
 OUT="$(run_on "$TESTROOT/A" "$HUB" status 2>&1)"
 check "status stays clean" grep -q 'plan: 0↑ 0↓ 0✗hub 0✗local' <<<"$OUT"
 
@@ -241,11 +243,16 @@ check "hub-only sid landed in A's OWN dir" test -f "$TESTROOT/A/claude/projects/
 checknot "no duplicate dir on A" test -d "$TESTROOT/A/claude/projects/$HPRE-cross/22222222-9999-4999-8999-222222222222.jsonl"
 
 # ══ T13: adopt ═══════════════════════════════════════════════════
-say "── T13 adopt foreign project"
-OUT="$(run_on "$TESTROOT/A" "$HUB" adopt "$HPRE-proj2" 2>&1)"
-check "cwd rewritten" grep -q '"cwd":"/home/dimi/proj2"' "$TESTROOT/A/claude/projects/$HPRE-proj2/bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb.jsonl"
+say "── T13 adopt a pulled project: cwd rewrite, entry cloned, no symlink"
+# the machine's claude.json still carries the entry under the HUB path (a copied
+# ~/.claude.json): adopt must find it by the project's hub-side name and clone it
+jq 'del(.projects["/home/dimi/proj2"]) | .projects["/Users/dimi/proj2"] = {"allowedTools":["X"],"hasTrustDialogAccepted":true}' \
+	"$TESTROOT/A/claude.json" >"$TESTROOT/A/claude.json.t" && mv "$TESTROOT/A/claude.json.t" "$TESTROOT/A/claude.json"
+OUT="$(run_on "$TESTROOT/A" "$HUB" adopt "$LPRE-proj2" 2>&1)"
+check "cwd rewritten" grep -q '"cwd":"/home/dimi/proj2"' "$TESTROOT/A/claude/projects/$LPRE-proj2/bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb.jsonl"
 check "adopt reported rewrite" grep -q 'rewrote' <<<"$OUT"
-check "alias still resolves" test -e "$TESTROOT/A/claude/projects/$LPRE-proj2"
+check "entry cloned under the local path" jq -e '.projects["/home/dimi/proj2"].allowedTools == ["X"]' "$TESTROOT/A/claude.json"
+checknot "no symlink under projects/" test -n "$(find "$TESTROOT/A/claude/projects" -maxdepth 1 -type l)"
 # post-adopt sync must not re-transfer (ts unchanged)
 OUT="$(run_on "$TESTROOT/A" "$HUB" status 2>&1)"
 check "post-adopt still clean" grep -q 'plan: 0↑ 0↓ 0✗hub 0✗local' <<<"$OUT"
@@ -255,10 +262,10 @@ say "── T14 memory files ride along; deletions propagate for them too"
 mkdir -p "$TESTROOT/A/claude/projects/$LPRE-proj1/memory"
 echo fact >"$TESTROOT/A/claude/projects/$LPRE-proj1/memory/boarding.md"
 run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
-check "memory file on hub" test -f "$HUB/projects/$LPRE-proj1/memory/boarding.md"
+check "memory file on hub" test -f "$HUB/projects/$HPRE-proj1/memory/boarding.md"
 rm -f "$TESTROOT/A/claude/projects/$LPRE-proj1/memory/boarding.md"
 run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
-check "boarding-file delete propagated (no zombie)" test ! -e "$HUB/projects/$LPRE-proj1/memory/boarding.md"
+check "boarding-file delete propagated (no zombie)" test ! -e "$HUB/projects/$HPRE-proj1/memory/boarding.md"
 OUT="$(run_on "$TESTROOT/A" "$HUB" run 2>&1)"
 check "and stays gone (no resurrection)" grep -q 'plan: 0↑ 0↓ 0✗hub 0✗local' <<<"$OUT"
 
@@ -272,6 +279,7 @@ run_on "$TESTROOT/B" "$HUB" run >/dev/null 2>&1
 check "A sees C's project" test -f "$TESTROOT/A/claude/projects/$LPRE-projC/33333333-aaaa-4aaa-8aaa-333333333333.jsonl"
 check "B sees C's project" test -f "$TESTROOT/B/claude/projects/$LPRE-projC/33333333-aaaa-4aaa-8aaa-333333333333.jsonl"
 check "B sees A's proj1 memory-less state consistently" test -d "$TESTROOT/B/claude/projects/$LPRE-proj1"
+check "C pulled the hub-native project under its own slug" test -d "$CR/projects/$LPRE-proj2" -a ! -L "$CR/projects/$LPRE-proj2"
 
 # ══ T16: hub-format dir name + local-format json key still moves entry ══
 say "── T16 entry push despite dir-name/json-key format mismatch"
@@ -306,13 +314,12 @@ sess "$TESTROOT/A/claude" "$LPRE-proj1" "$SID18" 2026-08-27T10:00:00.000Z
 touch "$TESTROOT/A/claude/tasks/$SID18/.lock"
 touch "$TESTROOT/A/claude/projects/$LPRE-proj1/stray.lock"
 run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
-check "transcript synced" test -f "$HUB/projects/$LPRE-proj1/$SID18.jsonl"
+check "transcript synced" test -f "$HUB/projects/$HPRE-proj1/$SID18.jsonl"
 check "task payload synced" test -f "$HUB/tasks/$SID18/t.json"
 checknot "task .lock did NOT travel" test -e "$HUB/tasks/$SID18/.lock"
-checknot "project stray.lock did NOT travel" test -e "$HUB/projects/$LPRE-proj1/stray.lock"
+checknot "project stray.lock did NOT travel" test -e "$HUB/projects/$HPRE-proj1/stray.lock"
 OUT="$(run_on "$TESTROOT/A" "$HUB" run 2>&1)"
 check "locks don't cause churn" grep -q 'plan: 0↑ 0↓ 0✗hub 0✗local' <<<"$OUT"
-
 
 # ══ T19: the per-machine lock is kernel-owned: an interrupted run leaves nothing behind ══
 say "── T19 lock: interrupted status, orphan work dirs"
@@ -324,6 +331,83 @@ mkdir -p "$TESTROOT/A/claude/.claude-sync/work.orphan"
 run_on "$TESTROOT/A" "$HUB" run --dry-run >/dev/null 2>&1
 checknot "orphan work dir swept by the next run" test -e "$TESTROOT/A/claude/.claude-sync/work.orphan"
 checknot "no work dir left behind after a run" test -n "$(ls -d "$TESTROOT/A/claude/.claude-sync"/work.* 2>/dev/null)"
+
+# ══ T20: localize — folders pulled under the hub's slug become real local-slug folders ══
+say "── T20 localize: hub-slug folders (old pulls) move under the local slug"
+SIDX=66666666-dddd-4ddd-8ddd-666666666666
+mkdir -p "$HUB/projects/$HPRE-projX" "$TESTROOT/A/claude/projects/$HPRE-projX"
+printf '%s\n' '{"type":"user","cwd":"/Users/dimi/projX","timestamp":"2026-08-28T10:00:00.000Z"}' \
+	>"$HUB/projects/$HPRE-projX/$SIDX.jsonl"
+cp "$HUB/projects/$HPRE-projX/$SIDX.jsonl" "$TESTROOT/A/claude/projects/$HPRE-projX/" # an old-scheme pull: hub name + alias
+ln -s "$TESTROOT/A/claude/projects/$HPRE-projX" "$TESTROOT/A/claude/projects/$LPRE-projX"
+ln -s "$TESTROOT/A/claude/projects/$HPRE-gone" "$TESTROOT/A/claude/projects/$LPRE-gone" # a dangling leftover
+# settle first: projX is agreed on both sides before the folder moves
+run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
+OUT="$(run_on "$TESTROOT/A" "$HUB" localize --dry-run 2>&1)"
+check "dry-run announces the rename" grep -q "would rename: $HPRE-projX -> $LPRE-projX" <<<"$OUT"
+check "dry-run moved nothing" test -d "$TESTROOT/A/claude/projects/$HPRE-projX" -a -L "$TESTROOT/A/claude/projects/$LPRE-projX"
+OUT="$(run_on "$TESTROOT/A" "$HUB" localize 2>&1)"
+check "real folder under the local slug" test -d "$TESTROOT/A/claude/projects/$LPRE-projX" -a ! -L "$TESTROOT/A/claude/projects/$LPRE-projX"
+check "transcript moved with it" test -f "$TESTROOT/A/claude/projects/$LPRE-projX/$SIDX.jsonl"
+checknot "hub-slug folder gone" test -e "$TESTROOT/A/claude/projects/$HPRE-projX"
+checknot "dangling leftover removed" test -L "$TESTROOT/A/claude/projects/$LPRE-gone"
+check "T16's legacy folder localized too" test -d "$TESTROOT/A/claude/projects/$LPRE-legacy"
+checknot "no symlink left under projects/" test -n "$(find "$TESTROOT/A/claude/projects" -maxdepth 1 -type l)"
+OUT="$(run_on "$TESTROOT/A" "$HUB" status 2>&1)"
+check "status clean after localize (no re-transfer)" grep -q 'plan: 0↑ 0↓ 0✗hub 0✗local' <<<"$OUT"
+A_MID="$(treesum "$TESTROOT/A")"
+OUT="$(run_on "$TESTROOT/A" "$HUB" localize 2>&1)"
+check "second localize is a no-op" test "$A_MID" = "$(treesum "$TESTROOT/A")"
+check "and says so" grep -q 'nothing to localize' <<<"$OUT"
+# conflict: real folders under both names → exit 1, nothing moves
+mkdir -p "$TESTROOT/A/claude/projects/$HPRE-dup" "$TESTROOT/A/claude/projects/$LPRE-dup"
+echo a >"$TESTROOT/A/claude/projects/$HPRE-dup/a.txt"
+echo b >"$TESTROOT/A/claude/projects/$LPRE-dup/b.txt"
+A_PRE="$(treesum "$TESTROOT/A")"
+OUT="$(run_on "$TESTROOT/A" "$HUB" localize 2>&1)"
+RC=$?
+check "conflict exits 1" test "$RC" = 1
+check "conflict names both folders" grep -q "$HPRE-dup and $LPRE-dup" <<<"$OUT"
+check "conflict moved nothing" test "$A_PRE" = "$(treesum "$TESTROOT/A")"
+rm -rf "$TESTROOT/A/claude/projects/$HPRE-dup" "$TESTROOT/A/claude/projects/$LPRE-dup"
+# the hub machine itself (one slug on both sides): nothing to rename, dangling leftovers still go
+ln -s "$HUB/projects/$HPRE-gone" "$HUB/projects/$LPRE-gone"
+HUB_DIRS="$(find "$HUB/projects" -maxdepth 1 -type d | sort)"
+OUT="$(CLAUDE_SYNC_LOCAL_CLAUDE="$HUB" CLAUDE_SYNC_LOCAL_JSON="$HUB.json" CLAUDE_SYNC_LOCAL_HOME="$HHOME" \
+	CLAUDE_SYNC_HUB_HOME="$HHOME" "$CS" localize --hub "$HUB" 2>&1)"
+checknot "same-slug machine: dangling symlink removed" test -L "$HUB/projects/$LPRE-gone"
+check "same-slug machine: no folder renamed" test "$HUB_DIRS" = "$(find "$HUB/projects" -maxdepth 1 -type d | sort)"
+# the hub machine migrating its own old pushes (folders under a satellite's slug): name that
+# satellite's $HOME as the other side; every such folder moves under the hub's own slug
+SIDO=99999999-0000-4000-8000-999999999999
+mkdir -p "$HUB/projects/$LPRE-oldpush"
+printf '%s\n' '{"type":"user","cwd":"/home/dimi/oldpush","timestamp":"2026-08-30T10:00:00.000Z"}' \
+	>"$HUB/projects/$LPRE-oldpush/$SIDO.jsonl"
+OUT="$(CLAUDE_SYNC_LOCAL_CLAUDE="$HUB" CLAUDE_SYNC_LOCAL_JSON="$HUB.json" CLAUDE_SYNC_LOCAL_HOME="$HHOME" \
+	CLAUDE_SYNC_HUB_HOME="$LHOME" "$CS" localize --hub "$HUB" 2>&1)"
+check "hub: old push renamed under the hub's own slug" test -f "$HUB/projects/$HPRE-oldpush/$SIDO.jsonl"
+checknot "hub: satellite-slug folder gone" test -e "$HUB/projects/$LPRE-oldpush"
+run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
+check "satellite pulls it under its own slug" test -f "$TESTROOT/A/claude/projects/$LPRE-oldpush/$SIDO.jsonl"
+
+# ══ T21: a localized project keeps syncing across the two slugs ═════
+say "── T21 localized project: hub -Users dir ↔ local -home dir, both ways"
+printf '%s\n' '{"type":"user","cwd":"/Users/dimi/projX","timestamp":"2026-08-29T10:00:00.000Z"}' \
+	>>"$HUB/projects/$HPRE-projX/$SIDX.jsonl" # hub advances the shared session
+SIDY=77777777-eeee-4eee-8eee-777777777777
+printf '%s\n' '{"type":"user","cwd":"/Users/dimi/projX","timestamp":"2026-08-29T11:00:00.000Z"}' \
+	>"$HUB/projects/$HPRE-projX/$SIDY.jsonl" # and starts a new one
+run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
+check "advanced session pulled into the local-slug folder" grep -q '2026-08-29T10:00' "$TESTROOT/A/claude/projects/$LPRE-projX/$SIDX.jsonl"
+check "new hub session pulled into the local-slug folder" test -f "$TESTROOT/A/claude/projects/$LPRE-projX/$SIDY.jsonl"
+checknot "no hub-slug folder reappeared" test -e "$TESTROOT/A/claude/projects/$HPRE-projX"
+SIDZ=88888888-ffff-4fff-8fff-888888888888
+sess "$TESTROOT/A/claude" "$LPRE-projX" "$SIDZ" 2026-08-29T12:00:00.000Z # A starts one
+run_on "$TESTROOT/A" "$HUB" run >/dev/null 2>&1
+check "local session pushed into the hub's own folder" test -f "$HUB/projects/$HPRE-projX/$SIDZ.jsonl"
+checknot "no local-slug folder on the hub" test -e "$HUB/projects/$LPRE-projX"
+OUT="$(run_on "$TESTROOT/A" "$HUB" run 2>&1)"
+check "settles clean" grep -q 'plan: 0↑ 0↓ 0✗hub 0✗local' <<<"$OUT"
 
 say ""
 say "════ RESULT: $PASS passed, $FAIL failed ════"

@@ -1,8 +1,15 @@
 // klodsync — per-project bidirectional Claude Code data sync (Go port of claude_sync).
 //
-//	klodsync status              show per-project verdicts, change nothing
-//	klodsync run [--dry-run]     sync both directions, per project
-//	klodsync adopt <project>     make a foreign-machine project resumable here
+//	klodsync status                show per-project verdicts, change nothing
+//	klodsync run [--dry-run]       sync both directions, per project
+//	klodsync adopt <project>       make a foreign-machine project resumable here
+//	klodsync localize [--dry-run]  move folders pulled under the hub's slug to this machine's slug
+//
+// Each side stores a project in a real folder named by its own path: a pull
+// lands under this machine's name, a push under the hub machine's, never the
+// other side's name and never a symlink. Claude Code's --continue and --resume
+// find sessions only there, so a session exited on one machine and synced
+// continues on the other.
 //
 // Direction is decided per project, per FILE, by newest activity (timestamps
 // read from inside session files, not mtimes). Newer history is never
@@ -71,6 +78,7 @@ func munge(p string) string {
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: klodsync status|run [--dry-run] [--hub HOST:DIR|DIR] [--allow-mass-delete]")
 	fmt.Fprintln(os.Stderr, "       klodsync adopt <project-dir-name>")
+	fmt.Fprintln(os.Stderr, "       klodsync localize [--dry-run]")
 	os.Exit(2)
 }
 
@@ -84,7 +92,7 @@ func main() {
 	adoptTarget := ""
 
 	switch verb {
-	case "status", "run", "adopt":
+	case "status", "run", "adopt", "localize":
 	default:
 		usage()
 	}
@@ -216,9 +224,12 @@ func runLocked(cfg *config, verb, adoptTarget string) int {
 	defer func() { _ = os.RemoveAll(work) }()
 
 	var runErr error
-	if verb == "adopt" {
+	switch verb {
+	case "adopt":
 		runErr = adopt(cfg, adoptTarget)
-	} else {
+	case "localize":
+		runErr = localize(cfg)
+	default:
 		runErr = sync(cfg, verb)
 	}
 	if runErr != nil {
