@@ -243,6 +243,7 @@ func sync(cfg *config, verb string) error {
 	syncFile(cfg, "CLAUDE.md")
 	syncFile(cfg, "settings.json")
 	syncFile(cfg, ".credentials.json") // Dimi 2026-08-26: LAN-only, creds included by his call
+	syncFile(cfg, "pstack-models.md")  // Dimi 2026-10-21: pstack's per-role model sheet travels with the plugin
 	pluginMetaSync(cfg, "plugins/installed_plugins.json")
 	pluginMetaSync(cfg, "plugins/known_marketplaces.json")
 	if err := historyUnion(cfg); err != nil {
