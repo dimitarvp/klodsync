@@ -32,7 +32,7 @@ func buckets(cfg *config) error {
 			{src, hubArg(cfg) + "/" + bucket},
 		} {
 			args := make([]string, 0, 2+len(ex)+2+2)
-			args = append(args, "-au", "-r")
+			args = append(args, "-au", "-r", "--no-perms", "-E")
 			args = append(args, ex...)
 			args = append(args, rsyncE(cfg)...)
 			args = append(args, dir[0]+"/", dir[1]+"/")

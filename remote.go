@@ -81,14 +81,17 @@ func runCmd(name string, args ...string) error {
 }
 
 // rsyncFiles transfers the relpaths in list (one per line) from src root to
-// dst root. Locks and .DS_Store never travel, matching the manifests.
+// dst root. Locks and .DS_Store never travel, matching the manifests. Only the
+// executable bit travels (--no-perms -E): a symlink is 777 on Linux by the
+// kernel's rule and 755 on macOS, and copying that mode onto a Linux symlink
+// fails with rsync exit 23.
 func rsyncFiles(cfg *config, listPath, src, dst string) error {
-	args := append([]string{"-a", "-r", "--exclude=.DS_Store", "--exclude=*.lock", "--files-from=" + listPath}, rsyncE(cfg)...)
+	args := append([]string{"-a", "-r", "--no-perms", "-E", "--exclude=.DS_Store", "--exclude=*.lock", "--files-from=" + listPath}, rsyncE(cfg)...)
 	return runCmd("rsync", append(args, src+"/", dst+"/")...)
 }
 
 func rsyncOne(cfg *config, src, dst string) error {
-	args := append([]string{"-a"}, rsyncE(cfg)...)
+	args := append([]string{"-a", "--no-perms", "-E"}, rsyncE(cfg)...)
 	return runCmd("rsync", append(args, src, dst)...)
 }
 
